@@ -8,11 +8,13 @@ class uint64(int):
     def __new__(cls, value):
         return int.__new__(int, value & ones_64)
 
-
+#%%
 files = ['a','b','c','d','e','f','g','h']
 def file_rank(pos):
-    return files[pos%8], pos//8
+    return files[pos%8], (pos//8)+1
 
+def file_rank_int(pos):
+    return (pos%8)+1, (pos//8)+1
 
 def file_rank_str(pos):
     f, r = file_rank(pos)
@@ -40,11 +42,17 @@ file_h = 0x80_80_80_80_80_80_80_80
 
 #%%
 
+def shift(x, n):
+    return x << abs(n) if (n >= 0) else x >> abs(n)
+
 def lshift_mask(x, steps, mask):
     return mask & (x << steps)
 
 def rshift_mask(x, steps, mask):
     return mask & (x >> steps)
+
+def shift_or(x, poss: list):
+    return uint64(reduce(int.__or__, [shift(x, i) for i in poss]))
 
 #%%
 def byte_repeat(x, n):
