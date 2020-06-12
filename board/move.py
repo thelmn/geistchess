@@ -14,7 +14,7 @@ class Move:
         self.iscapture = iscapture
 
     def __str__(self):
-        return f'Piece: {self.piece}, {file_rank_str(self.src-1)} -> {file_rank_str(self.dest-1)}'
+        return f'Piece: {self.piece}, {file_rank_str(self.src-1)} {"x" if self.iscapture else ">"} {file_rank_str(self.dest-1)}'
 
 class PieceMoveList(Iterable):
     def __init__(self, piece, srcs, dests, iscaptures):
@@ -29,9 +29,10 @@ class PieceMoveList(Iterable):
         while [self.srcs, self.dests]:
             src = next(self.srcs, sentinel)
             dest = next(self.dests, sentinel)
-            if sentinel in [src, dest]:
+            iscapture = next(self.iscaptures, sentinel)
+            if sentinel in [src, dest, iscapture]:
                 break
-            yield Move(self.piece, src, dest)
+            yield Move(self.piece, src, dest, iscapture)
 
 class MoveList(Iterable):
     def __init__(self, piece_move_lists):
