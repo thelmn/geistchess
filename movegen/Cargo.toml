@@ -1,0 +1,12 @@
+[package]
+name = "movegen"
+version = "0.1.0"
+authors = ["geist <lysonnjoroge@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+num-traits = "0.2.12"
+bitintr = "0.3"
+fnv = "1.0.7"
