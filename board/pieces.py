@@ -1,10 +1,14 @@
 import abc
 from typing import List
 from itertools import chain
+import sys
+sys.path.append('../../')
 
-from utils import uint64, shift, shift_or, file_rank_int, file_slide, senw_slide, swne_slide, get_bit_positions, clear_files, empty_bb, non_empty_bb, empty_gen, ray_moves
+
+from utils import uint64, shift, shift_or, file_rank_int, file_slide, senw_slide, swne_slide, get_bit_positions, clear_files, empty_bb, non_empty_bb, empty_gen, ray_moves, print_bb
 from move import PieceMoveList, Move
 
+#%%
 rank_4 = 0x00_00_00_00_ff_00_00_00
 rank_5 = 0x00_00_00_ff_00_00_00_00
 
@@ -25,7 +29,7 @@ king_shifts = [-1, 7, 8, 9, 1, -7, -8, -9]
 #          -1  >0< +1
 #          -9  -8  -7
 
-
+#%%
 class Piece(metaclass=abc.ABCMeta):
     _instance = None
 
@@ -356,3 +360,44 @@ class King(Piece):
     @property
     def standard_full(self):
         return uint64(0x10) if self._player else uint64(0x10_00_00_00_00_00_00_00)
+
+#%%
+ones_64 = 0xff_ff_ff_ff_ff_ff_ff_ff
+def get_knight_patterns(meknights):
+    isolated_kn = get_bit_positions(meknights)
+
+    mapping = []
+    print('knights: ', len(isolated_kn))
+    for bit_pos in isolated_kn:
+        kn_dest_bb = shift_or(shift(1, bit_pos-1), knight_shifts)
+
+        # clear last/first 2 files to avoid wrap around
+        file, _ = file_rank_int(bit_pos-1)
+        if file in [1, 2, 7, 8]:
+            kn_dest_bb = clear_files(kn_dest_bb, 2, start=file in [7, 8])
+        
+        # print_bb(kn_dest_bb)
+        mapping.append(kn_dest_bb)
+    return mapping
+
+
+# %%
+
+def get_king_patterns(mekings):
+    isolated_kn = get_bit_positions(mekings)
+
+    mapping = []
+    print('kings: ', len(isolated_kn))
+    for bit_pos in isolated_kn:
+        kn_dest_bb = shift_or(shift(1, bit_pos-1), king_shifts)
+
+        # clear last/first file to avoid wrap around
+        file, _ = file_rank_int(bit_pos-1)
+        if file in [1, 8]:
+            kn_dest_bb = clear_files(kn_dest_bb, 1, start=file == 8)
+        
+        # print_bb(kn_dest_bb)
+        mapping.append(kn_dest_bb)
+    return mapping
+
+# %%

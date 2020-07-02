@@ -1,9 +1,9 @@
 #%%
 from functools import reduce
-from pieces import Pawn, Knight, Bishop, Rook, Queen, King
-from move import MoveList, Move
+from .pieces import Pawn, Knight, Bishop, Rook, Queen, King
+from .move import MoveList, Move
 
-from utils import uint64, position_bb, print_board, print_bb, non_empty_bb
+from .utils import uint64, bit_count, position_bb, print_board, print_bb, non_empty_bb
 
 from typing import List
 
@@ -75,6 +75,9 @@ class Board():
     
     def bbs4_opp_player(self, player):
         return dict(filter(lambda pbb: pbb[0].player != player, self._bitboards.items()))
+
+    def piece_count(self):
+        return {p:bit_count(pbb) for p, pbb in self._bitboards.items()}
     
     def fill(self):
         pass
