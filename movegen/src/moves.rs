@@ -168,6 +168,7 @@ impl MoveList {
     where T: Iterator<Item = u8>, R: Iterator<Item = u8> {
         srcs.zip(dests).for_each(|(src, dest)| self.push(Move::new(piece, meta, src, dest)))
     }
+    
     pub fn get(&self) -> Move {
         self.moves[0]
     }

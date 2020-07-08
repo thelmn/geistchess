@@ -1,6 +1,6 @@
 use std::iter;
 
-use crate::board::{Board, BitBoard, RankBB, Direction};
+use crate::board::{BoardState, BitBoard, RankBB, Direction};
 use crate::moves::{Move, MoveMeta, BitPositions, MoveList};
 use crate::utils;
 
@@ -67,8 +67,12 @@ pub mod std_pieces {
         get_piece_i(&Piece{ piece_type, player })
     }
 
+    pub fn player_pieces_i(player: bool) -> usize {
+        if player { 0 } else { 6 }
+    }
+
     pub const STD_BITBOARDS: [BitBoard; STD_PIECECOUNT] = [
-        0,                      // White Pawns
+        STD_PAWNS_WHITE,        // White Pawns
         STD_KNIGHTS_WHITE,      // White Knights
         STD_BISHOPS_WHITE,      // White Bishops
         STD_ROOKS_WHITE,        // White Rooks
@@ -171,111 +175,156 @@ impl Piece {
         Piece{ piece_type: PieceType::Invalid, player: WHITE }
     }
     
-    pub fn move_list(&self, piece_mask: &BitBoard, board: &Board, prev_move: &Move, move_list: &mut MoveList) {
+    /// Return the piece attack mask and the the ray that checks the king, if king is in check
+    pub fn attack_check_mask(&self, piece_mask: &BitBoard, empty: &BitBoard, king_mask: &BitBoard) -> (BitBoard, BitBoard) {
+        let forward = self.player;
+        match self.piece_type {
+            PieceType::Pawn => {
+                let mut check_mask = 0;
+                // forward left capture
+                let dir = if forward { Direction::NW } else { Direction::SE };
+                let cp_l_dest = utils::slide(*piece_mask, 1, &dir);
+                if cp_l_dest & king_mask > 0 {
+                    check_mask |= utils::slide(*king_mask, 1, &dir.opp())
+                }
+                // forward right capture
+                let dir = if forward { Direction::NE } else { Direction::SW };
+                let cp_r_dest = utils::slide(*piece_mask, 1, &dir);
+                if cp_l_dest & king_mask > 0 {
+                    check_mask |= utils::slide(*king_mask, 1, &dir.opp())
+                }
+                (cp_l_dest | cp_r_dest, check_mask)
+            },
+            PieceType::Knight => {
+                let mut a_mask = 0;
+                let mut check_mask = 0;
+                for knight_pos in BitPositions(*piece_mask) {
+                    let attack_mask = utils::knight_attack(knight_pos);
+                    a_mask |= attack_mask;
+                    if attack_mask & king_mask > 0 {
+                        for king_pos in BitPositions(*king_mask) {
+                            check_mask |= utils::ray(king_pos, knight_pos);
+                        }
+                    }
+                }
+                (a_mask, check_mask)
+            },
+            PieceType::Bishop => {
+                let mut a_mask = 0;
+                let mut check_mask = 0;
+                for bishop_pos in BitPositions(*piece_mask) {
+                    let attack_mask = utils::bishop_attack(bishop_pos, !empty);
+                    a_mask |= attack_mask;
+                    if attack_mask & king_mask > 0 {
+                        for king_pos in BitPositions(*king_mask) {
+                            check_mask |= utils::ray(king_pos, bishop_pos);
+                        }
+                    }
+                }
+                (a_mask, check_mask)
+            },
+            PieceType::Rook => {
+                let mut a_mask = 0;
+                let mut check_mask = 0;
+                for rook_pos in BitPositions(*piece_mask) {
+                    let attack_mask = utils::rook_attack(rook_pos, !empty);
+                    a_mask |= attack_mask;
+                    if attack_mask & king_mask > 0 {
+                        for king_pos in BitPositions(*king_mask) {
+                            check_mask |= utils::ray(king_pos, rook_pos);
+                        }
+                    }
+                }
+                (a_mask, check_mask)
+            },
+            PieceType::Queen => {
+                let mut a_mask = 0;
+                let mut check_mask = 0;
+                for queen_pos in BitPositions(*piece_mask) {
+                    let attack_mask = utils::bishop_attack(queen_pos, !empty);
+                    let attack_mask = attack_mask ^ utils::rook_attack(queen_pos, !empty);
+                    a_mask |= attack_mask;
+                    if attack_mask & king_mask > 0 {
+                        for king_pos in BitPositions(*king_mask) {
+                            check_mask |= utils::ray(king_pos, queen_pos);
+                        }
+                    }
+                }
+                (a_mask, check_mask)
+            },
+            PieceType::King => {
+                let mut a_mask = 0;
+                for king_pos in BitPositions(*piece_mask) {
+                    a_mask |= utils::king_attack(king_pos);    
+                }
+                (a_mask, 0)
+            },
+            PieceType::Invalid => {(0, 0)},
+        }
+    }
+    
+    /// Finds legal (almost) moves for this piece. Returns the piece(s) attack mask
+    /// Only the corner case of enpassant capture leading to a check along the 4th rank is illegal
+    pub fn move_list(&self, piece_mask: &BitBoard, board_state: &BoardState, move_list: &mut MoveList) {
+        let board = board_state.board;
+        let prev_move = board_state.prev_move;
 
         let empty = board.empty_mask();
         let forward = self.player;
 
         let _player_mask = board.player_mask(forward);
         let oppnt_mask = board.player_mask(!forward);
-
+        
+        
         match self.piece_type {
             PieceType::Pawn => {
 
-                let rank7 = if forward { RankBB::Seven } else { RankBB::Two } as u64;
+                // Clear pinned pawns
+                // Loop through pinned pawns, add each pawn's moves separately with the pin ray as valid_mask.
+                // Probably not efficient
+                let pinned_pawns = piece_mask & board_state.pinned_mask;
+                let piece_mask = piece_mask & !board_state.pinned_mask;
 
-                // direction is reversed since we shift the dest(empty/opponent) squares towards our pawns
-                let mut dir = if forward { Direction::S } else { Direction::N };
-                // single pawn push
-                let pp1 = utils::slide(empty, 1, &dir) & piece_mask;
-                // with promotion
-                let pp_promo = pp1 & rank7;
-                let pp1 = pp1 & !rank7; // clear rank7 of single pawn pushes
-                
-                // double pawn push
-                let mut pp2 = if forward { RankBB::Four } else { RankBB::Five } as u64;
-                pp2 = utils::slide(pp2 & empty, 1, &dir) & empty;
-                pp2 = utils::slide(pp2, 1, &dir) & piece_mask;
-                
-                // the piece destinations
-                dir = if forward { Direction::N } else { Direction::S };
-                let pp1_dest = utils::slide(pp1, 1, &dir);
-                let pp_promo_dest = utils::slide(pp_promo, 1, &dir);
-                let pp2_dest = utils::slide(pp2, 2, &dir);
-
-                // normal capture
-
-                // forward left capture
-                dir = if forward { Direction::SE } else { Direction::NW };
-                let cp_l = utils::slide(oppnt_mask, 1, &dir) & piece_mask;
-                // with promotion
-                let cp_l_promo = cp_l & rank7;
-                let cp_l = cp_l & !rank7; // clear rank7 of capture to left
-                // dest
-                dir = if forward { Direction::NW } else { Direction::SE };
-                let cp_l_dest = utils::slide(cp_l, 1, &dir);
-                let cp_l_promo_dest = utils::slide(cp_l_promo, 1, &dir);
-
-                // forward right capture
-                dir = if forward { Direction::SW } else { Direction::NE };
-                let cp_r = utils::slide(oppnt_mask, 1, &dir) & piece_mask;
-                // with promotion
-                let cp_r_promo = cp_r & rank7;
-                let cp_r = cp_r & !rank7; // clear rank7 of capture to right
-                // dest
-                dir = if forward { Direction::NE } else { Direction::SW };
-                let cp_r_dest = utils::slide(cp_r, 1, &dir);
-                let cp_r_promo_dest = utils::slide(cp_r_promo, 1, &dir);
-
-                // enpassant capture
-                let mut cp_enp = 0;
-                let mut cp_enp_dest = 0;
-                if prev_move.move_meta() == MoveMeta::Enpassant 
-                    && prev_move.piece().player == !forward {
-                        let dest = prev_move.dest();
-                        cp_enp_dest = if forward { dest+8 } else { dest-8 };
-                        let dest_mask = utils::pos_mask(dest);
-                        cp_enp = if forward { 
-                            utils::slide(dest_mask, 1, &Direction::SW) |
-                            utils::slide(dest_mask, 1, &Direction::SE)
-                         } else {
-                            utils::slide(dest_mask, 1, &Direction::NW) |
-                            utils::slide(dest_mask, 1, &Direction::NE)
-                         } & piece_mask;
+                for pawn_pos in BitPositions(pinned_pawns) {
+                    if let Some(ray) = board_state.pinned_pieces.get(&pawn_pos) {
+                        let valid_mask = if ray == &0 { &utils::ONES } else { ray };
+                        pawn_moves(forward, &piece_mask, valid_mask, &empty, &oppnt_mask, prev_move, self, move_list);
                     }
-
-                let meta = MoveMeta::Quiet;
-                move_list.push_from_forpiece( self, &meta, BitPositions(pp1), BitPositions(pp1_dest) );
-                move_list.push_from_forpiece( self, &meta, BitPositions(pp2), BitPositions(pp2_dest) );
-                let meta = MoveMeta::Capture;
-                move_list.push_from_forpiece( self, &meta, BitPositions(cp_l), BitPositions(cp_l_dest) );
-                move_list.push_from_forpiece( self, &meta, BitPositions(cp_r), BitPositions(cp_r_dest) );
-                let meta = MoveMeta::Enpassant;
-                move_list.push_from_forpiece( self, &meta, BitPositions(cp_enp), iter::repeat(cp_enp_dest) );
-                // each possible target piecetype for promo is a separate move
-                for promo_to in &PROMO_TARGETS {
-                    let meta = MoveMeta::Promotion{ is_capture: false,  piece_type: *promo_to };
-                    move_list.push_from_forpiece( self, &meta, BitPositions(pp_promo), BitPositions(pp_promo_dest) );
-                    let meta = MoveMeta::Promotion{ is_capture: true,  piece_type: *promo_to };
-                    move_list.push_from_forpiece( self, &meta, BitPositions(cp_l_promo), BitPositions(cp_l_promo_dest) );
-                    move_list.push_from_forpiece( self, &meta, BitPositions(cp_r_promo), BitPositions(cp_r_promo_dest) );
                 }
+                // use the check mask as the valid mask
+                let valid_mask = if board_state.opp_check_mask == &0 { &utils::ONES } else { board_state.opp_check_mask };
+                pawn_moves(forward, &piece_mask, valid_mask, &empty, &oppnt_mask, prev_move, self, move_list);
             },
             PieceType::Knight => {
-                for king_pos in BitPositions(*piece_mask) {
-                    let attack_mask = utils::patterns::KNIGHT_PATTERNS[king_pos as usize];
+                for knight_pos in BitPositions(*piece_mask) {
+                    let mut attack_mask = utils::knight_attack(knight_pos);
+                    // Masking with the ray is unnecessary. Knights cant move along rays
+                    if let Some(ray) = board_state.pinned_pieces.get(&knight_pos) {
+                        attack_mask &= ray;
+                    }
+                    if *(board_state.opp_check_mask) > 0 {
+                        attack_mask &= board_state.opp_check_mask;
+                    }
                     let ncp_dest = attack_mask & empty;
                     let cp_dest = attack_mask & oppnt_mask;
 
                     let meta = MoveMeta::Quiet;
-                    move_list.push_from_forpiece( self, &meta, iter::repeat(king_pos), BitPositions(ncp_dest) );
+                    move_list.push_from_forpiece( self, &meta, iter::repeat(knight_pos), BitPositions(ncp_dest) );
                     let meta = MoveMeta::Capture;
-                    move_list.push_from_forpiece( self, &meta, iter::repeat(king_pos), BitPositions(cp_dest) );
+                    move_list.push_from_forpiece( self, &meta, iter::repeat(knight_pos), BitPositions(cp_dest) );
                 }
             },
             PieceType::Bishop => {
                 for bishop_pos in BitPositions(*piece_mask) {
-                    let attack_mask = utils::magic::bishop_attack(bishop_pos, !empty);
+                    let mut attack_mask = utils::bishop_attack(bishop_pos, !empty);
+                    // if piece is pinned, only move along the pin ray
+                    if let Some(ray) = board_state.pinned_pieces.get(&bishop_pos) {
+                        attack_mask &= ray;
+                    }
+                    // if in check only moves that block the check are valid
+                    if *(board_state.opp_check_mask) > 0 {
+                        attack_mask &= board_state.opp_check_mask;
+                    }
                     let ncp_dest = attack_mask & empty;
                     let cp_dest = attack_mask & oppnt_mask;
 
@@ -287,7 +336,13 @@ impl Piece {
             },
             PieceType::Rook => {
                 for rook_pos in BitPositions(*piece_mask) {
-                    let attack_mask = utils::magic::rook_attack(rook_pos, !empty);
+                    let mut attack_mask = utils::rook_attack(rook_pos, !empty);
+                    if let Some(ray) = board_state.pinned_pieces.get(&rook_pos) {
+                        attack_mask &= ray;
+                    }
+                    if *(board_state.opp_check_mask) > 0 {
+                        attack_mask &= board_state.opp_check_mask;
+                    }
                     let ncp_dest = attack_mask & empty;
                     let cp_dest = attack_mask & oppnt_mask;
 
@@ -299,11 +354,17 @@ impl Piece {
             },
             PieceType::Queen => {
                 for queen_pos in BitPositions(*piece_mask) {
-                    let attack_mask = utils::magic::bishop_attack(queen_pos, !empty);
-                    let attack_mask = attack_mask ^ utils::magic::rook_attack(queen_pos, !empty);
+                    let attack_mask = utils::bishop_attack(queen_pos, !empty);
+                    let mut attack_mask = attack_mask ^ utils::rook_attack(queen_pos, !empty);
+                    if let Some(ray) = board_state.pinned_pieces.get(&queen_pos) {
+                        attack_mask &= ray;
+                    }
+                    if *(board_state.opp_check_mask) > 0 {
+                        attack_mask &= board_state.opp_check_mask;
+                    }
                     let ncp_dest = attack_mask & empty;
                     let cp_dest = attack_mask & oppnt_mask;
-
+    
                     let meta = MoveMeta::Quiet;
                     move_list.push_from_forpiece( self, &meta, iter::repeat(queen_pos), BitPositions(ncp_dest) );
                     let meta = MoveMeta::Capture;
@@ -312,12 +373,35 @@ impl Piece {
             },
             PieceType::King => {
                 for king_pos in BitPositions(*piece_mask) {
-                    let attack_mask = utils::patterns::KING_PATTERNS[king_pos as usize];
+                    let attack_mask = utils::king_attack(king_pos);
+                    // clear attacked squares
+                    let attack_mask = attack_mask & !board_state.opp_attack_mask;
+
                     let ncp_dest = attack_mask & empty;
                     let cp_dest = attack_mask & oppnt_mask;
 
-                    // TODO: Castling. Pass a BoardState object?
-
+                    // can only castle while not in check
+                    if *(board_state.opp_check_mask) == 0 {
+                        // check short castle rights
+                        if board.castle_rights(forward, true) {
+                            // check that opp does not attack the squares the king will travel over
+                            if (board_state.opp_attack_mask & utils::castle_travel_squares(forward, true) == 0) &&
+                                // and the squares between are not occupied
+                                (!empty & utils::castle_empty_squares(forward, true) == 0) {
+                                let meta = MoveMeta::Castle{ is_short: true };
+                                move_list.push(Move::new(self, &meta, king_pos, 0));
+                            }
+                        }
+                        // check long castle rights
+                        if board.castle_rights(forward, false) {
+                            if (board_state.opp_attack_mask & utils::castle_travel_squares(forward, false) == 0) &&
+                                (!empty & utils::castle_empty_squares(forward, false) == 0) {
+                                let meta = MoveMeta::Castle{ is_short: false };
+                                move_list.push(Move::new(self, &meta, king_pos, 0));
+                            }
+                        }
+                    }                    
+    
                     let meta = MoveMeta::Quiet;
                     move_list.push_from_forpiece( self, &meta, iter::repeat(king_pos), BitPositions(ncp_dest) );
                     let meta = MoveMeta::Capture;
@@ -326,5 +410,100 @@ impl Piece {
             },
             PieceType::Invalid => {},
         }
+
+    }
+}
+
+fn pawn_moves(
+        forward: bool, 
+        piece_mask: &BitBoard, 
+        valid_mask: &BitBoard, 
+        empty: &BitBoard, 
+        opp_mask: &BitBoard,
+        prev_move: &Move,
+        self_: &Piece,
+        move_list: &mut MoveList
+    ) {
+
+    let rank7 = if forward { RankBB::Seven } else { RankBB::Two } as u64;
+    let rank8 = if forward { RankBB::Eight } else { RankBB::One } as u64;
+    
+    // direction is reversed since we shift the dest(empty/opponent) squares towards our pawns
+    let mut dir = if forward { Direction::S } else { Direction::N };
+    // single pawn push
+    // valid mask can be the combined pin rays or the check ray
+    let pp1 = utils::slide(empty & valid_mask, 1, &dir) & piece_mask;
+    // with promotion
+    let pp_promo = pp1 & rank7;
+    
+    // double pawn push
+    let mut pp2 = if forward { RankBB::Four } else { RankBB::Five } as u64;
+    pp2 = utils::slide(pp2 & empty & valid_mask, 1, &dir) & empty;
+    pp2 = utils::slide(pp2, 1, &dir) & piece_mask;
+    
+    // the piece destinations
+    dir = if forward { Direction::N } else { Direction::S };
+    let pp1_dest = utils::slide(pp1, 1, &dir);
+    let pp_promo_dest = pp1_dest & rank8;
+
+    let pp2_dest = utils::slide(pp2, 2, &dir);
+
+    // normal capture
+
+    // forward left capture
+    dir = if forward { Direction::SE } else { Direction::NW };
+    let cp_l = utils::slide(opp_mask & valid_mask, 1, &dir) & piece_mask;
+    // with promotion
+    let cp_l_promo = cp_l & rank7;
+    // dest
+    dir = if forward { Direction::NW } else { Direction::SE };
+    let cp_l_dest = utils::slide(cp_l, 1, &dir);
+    let cp_l_promo_dest = cp_l_dest & rank8;
+
+    // forward right capture
+    dir = if forward { Direction::SW } else { Direction::NE };
+    let cp_r = utils::slide(opp_mask & valid_mask, 1, &dir) & piece_mask;
+    // with promotion. the promo sqs from cp_r are cleared at gen moves
+    let cp_r_promo = cp_r & rank7;
+    // dest
+    dir = if forward { Direction::NE } else { Direction::SW };
+    let cp_r_dest = utils::slide(cp_r, 1, &dir);
+    let cp_r_promo_dest = cp_r_dest & rank8;
+
+    // enpassant capture
+    let mut cp_enp = 0;
+    let mut cp_enp_dest = 0;
+    if prev_move.move_meta() == MoveMeta::Enpassant &&
+        prev_move.piece().player == !forward &&
+        *valid_mask == utils::ONES  // can't enpassant capture to block a check or when pinned
+        {
+            let dest = prev_move.dest();
+            cp_enp_dest = if forward { dest+8 } else { dest-8 };
+            let dest_mask = utils::pos_mask(dest);
+            cp_enp = if forward { 
+                utils::slide(dest_mask, 1, &Direction::SW) |
+                utils::slide(dest_mask, 1, &Direction::SE)
+             } else {
+                utils::slide(dest_mask, 1, &Direction::NW) |
+                utils::slide(dest_mask, 1, &Direction::NE)
+             } & piece_mask;
+        }
+
+
+    let meta = MoveMeta::Quiet;
+    move_list.push_from_forpiece( self_, &meta, BitPositions(pp1 & !rank7), BitPositions(pp1_dest & !rank8) );
+    move_list.push_from_forpiece( self_, &meta, BitPositions(pp2), BitPositions(pp2_dest) );
+    let meta = MoveMeta::Capture;
+    move_list.push_from_forpiece( self_, &meta, BitPositions(cp_l & !rank7), BitPositions(cp_l_dest & !rank8) );
+    move_list.push_from_forpiece( self_, &meta, BitPositions(cp_r & !rank7), BitPositions(cp_r_dest & !rank8) );
+    let meta = MoveMeta::Enpassant;
+    move_list.push_from_forpiece( self_, &meta, BitPositions(cp_enp), iter::repeat(cp_enp_dest) );
+    // each possible target piecetype for promo is a separate move
+    for promo_to in &PROMO_TARGETS {
+        let meta = MoveMeta::Promotion{ is_capture: false,  piece_type: *promo_to };
+        move_list.push_from_forpiece( self_, &meta, BitPositions(pp_promo), BitPositions(pp_promo_dest) );
+        let meta = MoveMeta::Promotion{ is_capture: true,  piece_type: *promo_to };
+        move_list.push_from_forpiece( self_, &meta, BitPositions(cp_l_promo), BitPositions(cp_l_promo_dest) );
+        move_list.push_from_forpiece( self_, &meta, BitPositions(cp_r_promo), BitPositions(cp_r_promo_dest) );
     }
 }

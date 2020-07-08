@@ -5,7 +5,7 @@ import sys
 sys.path.append('../../')
 
 
-from utils import uint64, shift, shift_or, file_rank_int, file_slide, senw_slide, swne_slide, get_bit_positions, clear_files, empty_bb, non_empty_bb, empty_gen, ray_moves, print_bb
+from .utils import uint64, shift, shift_or, file_rank_int, file_slide, senw_slide, swne_slide, get_bit_positions, clear_files, empty_bb, non_empty_bb, empty_gen, ray_moves, print_bb
 from move import PieceMoveList, Move
 
 #%%
@@ -398,6 +398,25 @@ def get_king_patterns(mekings):
         
         # print_bb(kn_dest_bb)
         mapping.append(kn_dest_bb)
+    return mapping
+
+# %%
+def get_single_pawn_attacks():
+
+    mapping = []
+    forward = False
+    for i in range(64):
+        mapping.append( uint64( 
+            senw_slide(1<<i, 1, forward) | 
+            swne_slide(1<<i, 1, forward) 
+            ) )
+    forward = True
+    for i in range(64):
+        mapping.append( uint64( 
+            senw_slide(1<<i, 1, forward) | 
+            swne_slide(1<<i, 1, forward) 
+            ) )
+    
     return mapping
 
 # %%
