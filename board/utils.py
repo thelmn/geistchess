@@ -91,7 +91,7 @@ def swne_slide(bitboard, steps=1, forward=True):
         bb = uint64(bitboard << 9*steps)
         return clear_files(bb, steps)
     else:
-        bb = uint64(bitboard << 9*steps)
+        bb = uint64(bitboard >> 9*steps)
         return clear_files(bb, steps, start=False)
 
 
@@ -335,7 +335,6 @@ MAGIC_R_OFFSETS = [
 
 #%%
 
-# TODO: gen magic attack arrays in python
 MAGIC_B = [0]*5248;
 MAGIC_R = [0]*102400;
 
@@ -425,5 +424,45 @@ def write_magicmoves():
 
 #%%
 # write_magicmoves()
+
+# %%
+def get_rays():
+    rays = []
+    for i in range(64):
+        i_file, i_rank = i%8, i//8
+        # print(f"from {file_rank_str(i)}")
+        from_i = []
+        for j in range(64):
+            j_file, j_rank = j%8, j//8
+            ray = 0
+            if i != j:
+                if i_file == j_file:
+                    dirs=['n', 's']
+                elif i_rank == j_rank:
+                    dirs=['e', 'w']
+                elif i_rank-i_file == j_rank-j_file:
+                    dirs=['sw', 'ne']
+                elif i_rank+i_file == j_rank+j_file:
+                    dirs=['se', 'nw']
+                ray = ray_moves(i, occp=(1<<j), dirs=dirs)
+                ray &= ray_moves(j, occp=(1<<i), dirs=dirs)
+                # if ray != 0:
+                # the dest is always in the ray, even when no direct ray exists! useful elsewhere 
+                ray |= (1<<j) 
+            # print(f"to {file_rank_str(j)}: {ray}")
+            # print(i,j,rays[i][j])
+            from_i.append(ray)
+        rays.append(from_i)
+    return rays
+
+
+# %%
+def write_rays():
+    a = get_rays()
+    with open('./rays.txt', "w") as f:
+        f.write("[\n" + ",\n".join(
+            "["+",".join(hex(i) for i in line)+"]" for line in a
+        ) + "\n]"
+)
 
 # %%

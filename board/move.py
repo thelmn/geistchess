@@ -7,7 +7,6 @@ from utils import file_rank_str
 class Move:
     def __init__(self, piece, src: int, dest: int, iscapture = False):
         super().__init__()
-        # TODO: if is capture
         self.piece = piece
         self.src = src
         self.dest = dest
