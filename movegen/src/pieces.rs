@@ -267,7 +267,6 @@ impl Piece {
     /// Only the corner case of enpassant capture leading to a check along the 4th rank is illegal
     pub fn move_list(&self, piece_mask: &BitBoard, board_state: &BoardState, move_list: &mut MoveList) {
         let board = board_state.board;
-        let prev_move = board_state.prev_move;
 
         let empty = board.empty_mask();
         let forward = self.player;
@@ -288,12 +287,12 @@ impl Piece {
                 for pawn_pos in BitPositions(pinned_pawns) {
                     if let Some(ray) = board_state.pinned_pieces.get(&pawn_pos) {
                         let valid_mask = if ray == &0 { &utils::ONES } else { ray };
-                        pawn_moves(forward, &piece_mask, valid_mask, &empty, &oppnt_mask, prev_move, self, move_list);
+                        pawn_moves(forward, &piece_mask, valid_mask, &empty, &oppnt_mask, &board.enp_target, self, move_list);
                     }
                 }
                 // use the check mask as the valid mask
                 let valid_mask = if board_state.opp_check_mask == &0 { &utils::ONES } else { board_state.opp_check_mask };
-                pawn_moves(forward, &piece_mask, valid_mask, &empty, &oppnt_mask, prev_move, self, move_list);
+                pawn_moves(forward, &piece_mask, valid_mask, &empty, &oppnt_mask, &board.enp_target, self, move_list);
             },
             PieceType::Knight => {
                 for knight_pos in BitPositions(*piece_mask) {
@@ -420,7 +419,7 @@ fn pawn_moves(
         valid_mask: &BitBoard, 
         empty: &BitBoard, 
         opp_mask: &BitBoard,
-        prev_move: &Move,
+        enp_target: &u8,
         self_: &Piece,
         move_list: &mut MoveList
     ) {
@@ -473,13 +472,11 @@ fn pawn_moves(
     // enpassant capture
     let mut cp_enp = 0;
     let mut cp_enp_dest = 0;
-    if prev_move.move_meta() == MoveMeta::Enpassant &&
-        prev_move.piece().player == !forward &&
+    if *enp_target != 0 &&
         *valid_mask == utils::ONES  // can't enpassant capture to block a check or when pinned
         {
-            let dest = prev_move.dest();
-            cp_enp_dest = if forward { dest+8 } else { dest-8 };
-            let dest_mask = utils::pos_mask(dest);
+            cp_enp_dest = if forward { enp_target+8 } else { enp_target-8 };
+            let dest_mask = utils::pos_mask(cp_enp_dest);
             cp_enp = if forward { 
                 utils::slide(dest_mask, 1, &Direction::SW) |
                 utils::slide(dest_mask, 1, &Direction::SE)

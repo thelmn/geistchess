@@ -56,6 +56,10 @@ pub struct Board<'a> {
     pub castle_w_l: bool,
     pub castle_b_s: bool,
     pub castle_b_l: bool,
+    pub player: bool,
+    pub fifty_move_count: u8,
+    pub ply: u8,
+    pub enp_target: u8
 }
 
 pub struct BoardState<'a> {
@@ -79,7 +83,108 @@ impl<'a> Board<'a> {
             castle_w_l: true,
             castle_b_s: true,
             castle_b_l: true,
+            player: WHITE,
+            fifty_move_count: 0,
+            ply: 0,
+            enp_target: 0,
         }
+    }
+    pub fn empty() -> Board<'a> {
+        Board {
+            bitboards: [0; STD_PIECECOUNT],
+            previous: None,
+            castle_w_s: true,
+            castle_w_l: true,
+            castle_b_s: true,
+            castle_b_l: true,
+            player: WHITE,
+            fifty_move_count: 0,
+            ply: 0,
+            enp_target: 0,
+        }
+    }
+    /// Parse an FEN string position into a board
+    pub fn from_fenstr(fen_str: &str)-> Result<Board, String> {
+        // TODO: add 50move rule count and ply count to the Board struct
+        let mut board = Board::empty();
+
+        // board from 8th rank <space>
+        // next player <space>
+        // king/queen side castling rights <space>
+        // enpassant target sq <space>
+        // 50 move rule count <space>
+        // ply count
+        // 
+        // ex. rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1
+        for (i, section_str) in fen_str.split_whitespace().enumerate() {
+            match i {
+                0 => {
+                    let rank_strings: Vec<&str> = section_str.split('/').collect();
+                    if rank_strings.len() != 8 {
+                        return Err( "Piece placement string not complete".to_string() );
+                    }
+                    
+                    for (rank, &rank_str) in rank_strings.iter().enumerate() {
+                        let rank = rank as u8;
+                        let mut file = 0u8;
+                        for piece_char in rank_str.chars() {
+                            let player = "PNBRQK".contains(piece_char);
+                            let mut piece = Piece{ piece_type: PieceType::Invalid, player };
+                            match piece_char {
+                                'p' | 'P' => piece.piece_type = PieceType::Pawn, 
+                                'n' | 'N' => piece.piece_type = PieceType::Knight, 
+                                'b' | 'B' => piece.piece_type = PieceType::Bishop, 
+                                'r' | 'R' => piece.piece_type = PieceType::Rook, 
+                                'q' | 'Q' => piece.piece_type = PieceType::Queen, 
+                                'k' | 'K' => piece.piece_type = PieceType::King, 
+                                '1'..='8' => {
+                                    if let Some(space_count) = piece_char.to_digit(10) {
+                                        file += space_count as u8;
+                                        continue;
+                                    } else {
+                                        return Err( format!("Something went wrong while reading {} as a number", piece_char) )
+                                    }
+                                }, 
+                                _ => {
+                                    return Err( format!("Piece placement string contains invalid character: {}", piece_char) )
+                                }
+                            }
+                            board.bitboards[get_piece_i(&piece)] |= utils::pos_mask(rank*8 + file);
+                            file += 1
+                        }
+                    }
+                },
+                1 => {
+                    board.player = section_str == "w";
+                },
+                2 => {
+                    board.castle_w_s = section_str.contains('K');
+                    board.castle_w_l = section_str.contains('Q');
+                    board.castle_b_s = section_str.contains('k');
+                    board.castle_b_l = section_str.contains('q');
+                },
+                3 => {
+                    if let Some(dest) = utils::pos_from_str(section_str) {
+                        board.enp_target = dest;
+                    }
+                },
+                4 => {
+                    if let Ok(count) = section_str.parse::<u8>() {
+                        board.fifty_move_count = count;
+                    }
+                },
+                5 => {
+                    if let Ok(count) = section_str.parse::<u8>() {
+                        board.ply = count;
+                    }
+                },
+                _ => {
+                    return Err( "Found more segments than expected".to_string() );
+                }
+            }
+        }
+        Ok( board )
+
     }
     pub fn attack_check_mask(&self, player: bool) -> (BitBoard, BitBoard) {
         let opp_king_mask = self.piece_bb(PieceType::King, !player);
@@ -179,12 +284,16 @@ impl<'a> Board<'a> {
     }
     pub fn from_self(&self, bitboards: [BitBoard; STD_PIECECOUNT]) -> Board {
         Board {
-            bitboards: bitboards,
-            previous: Some(self),
+            bitboards:  bitboards,
+            previous:   Some(self),
             castle_w_s: self.castle_w_s,
             castle_w_l: self.castle_w_l,
             castle_b_s: self.castle_b_s,
             castle_b_l: self.castle_b_l,
+            player:     self.player,
+            fifty_move_count: self.fifty_move_count,
+            ply: self.ply,
+            enp_target: 0,
         }
     }
     pub fn make_move(&self, mov: Move) -> Option<Board> {
@@ -240,7 +349,25 @@ impl<'a> Board<'a> {
                 let is_short = file == 0;
                 next_board.unset_castle_rights(player, is_short);
             },
+            Piece{ piece_type: PieceType::Pawn, player: _ } => {
+                // if double pawn push, get enp target
+                if utils::is_double_pawnpush(&mov) {
+                    next_board.enp_target = mov.dest();
+                }
+            }
             _ => {}
+        }
+
+        // 50 move rule: reset count if move is a pawn push or a capture
+        if mov.piece().piece_type == PieceType::Pawn || mov.move_meta().is_capture() {
+            next_board.fifty_move_count = 0;
+        } else {
+            next_board.fifty_move_count += 1;
+        }
+        
+        // increment ply on black's move
+        if player == BLACK {
+            next_board.ply += 1;
         }
 
         Some( next_board )
