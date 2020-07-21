@@ -1,6 +1,6 @@
 use std::iter;
 
-use crate::board::{BoardState, BitBoard, RankBB, Direction};
+use crate::board::{BoardState, BitBoard, rank_bb, Direction};
 use crate::moves::{Move, MoveMeta, BitPositions, MoveList};
 use crate::utils;
 
@@ -170,6 +170,25 @@ impl Piece {
     pub fn an(&self) -> &'static str {
         self.piece_type.an()
     } 
+
+    pub fn piece_char(&self) -> char {
+        match self {
+            Piece{ piece_type: PieceType::Pawn,   player: WHITE } => 'P',
+            Piece{ piece_type: PieceType::Knight, player: WHITE } => 'N',
+            Piece{ piece_type: PieceType::Bishop, player: WHITE } => 'B',
+            Piece{ piece_type: PieceType::Rook,   player: WHITE } => 'R',
+            Piece{ piece_type: PieceType::Queen,  player: WHITE } => 'Q',
+            Piece{ piece_type: PieceType::King,   player: WHITE } => 'K',
+            
+            Piece{ piece_type: PieceType::Pawn,   player: BLACK } => 'p',
+            Piece{ piece_type: PieceType::Knight, player: BLACK } => 'n',
+            Piece{ piece_type: PieceType::Bishop, player: BLACK } => 'b',
+            Piece{ piece_type: PieceType::Rook,   player: BLACK } => 'r',
+            Piece{ piece_type: PieceType::Queen,  player: BLACK } => 'q',
+            Piece{ piece_type: PieceType::King,   player: BLACK } => 'k',
+            _ => '·',
+        }
+    }
 
     pub fn invalid() -> Piece {
         Piece{ piece_type: PieceType::Invalid, player: WHITE }
@@ -409,7 +428,12 @@ impl Piece {
             },
             PieceType::Invalid => {},
         }
+    }
+}
 
+impl std::fmt::Display for Piece {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.piece_char())
     }
 }
 
@@ -424,8 +448,8 @@ fn pawn_moves(
         move_list: &mut MoveList
     ) {
 
-    let rank7 = if forward { RankBB::Seven } else { RankBB::Two } as u64;
-    let rank8 = if forward { RankBB::Eight } else { RankBB::One } as u64;
+    let rank7 = if forward { rank_bb::SEVEN } else { rank_bb::TWO };
+    let rank8 = if forward { rank_bb::EIGHT } else { rank_bb::ONE };
     
     // direction is reversed since we shift the dest(empty/opponent) squares towards our pawns
     let mut dir = if forward { Direction::S } else { Direction::N };
@@ -436,7 +460,7 @@ fn pawn_moves(
     let pp_promo = pp1 & rank7;
     
     // double pawn push
-    let mut pp2 = if forward { RankBB::Four } else { RankBB::Five } as u64;
+    let mut pp2 = if forward { rank_bb::FOUR } else { rank_bb::FIVE };
     pp2 = utils::slide(pp2 & empty & valid_mask, 1, &dir) & empty;
     pp2 = utils::slide(pp2, 1, &dir) & piece_mask;
     

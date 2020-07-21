@@ -114,6 +114,9 @@ impl Move {
     pub fn dest_bb(&self) -> BitBoard {
         1 << self.dest()
     }
+    pub fn is_invalid(&self) -> bool {
+        self.meta == 0 && self.srcdest == 0
+    }
 }
 
 impl Clone for Move {
@@ -143,22 +146,23 @@ impl fmt::Display for Move {
     }
 }
 
-const MAX_MOVES: usize = 255;
+pub const AVG_MOVE_COUNT: usize = 30;
 
 pub struct MoveList {
-    moves: [Move; MAX_MOVES],
-    pub count: usize,
+    moves: Vec<Move>,
 }
 
 impl MoveList {
-    pub fn empty() -> Self {
-        MoveList { moves: [Move::invalid(); MAX_MOVES], count: 0 }
+    pub fn new() -> Self {
+        MoveList { 
+            moves: Vec::with_capacity(AVG_MOVE_COUNT)
+        }
+    }
+    pub fn clear(&mut self) {
+        self.moves.clear()
     }
     pub fn push(&mut self, m: Move) {
-        if self.count < MAX_MOVES {
-            self.moves[self.count] = m;
-            self.count += 1;
-        }
+        self.moves.push(m);
     }
     pub fn push_from<T: Iterator<Item = Move>>(&mut self, moves: T) {
         moves.for_each(|m| self.push(m))
@@ -172,45 +176,9 @@ impl MoveList {
     pub fn get(&self) -> Move {
         self.moves[0]
     }
-}
 
-impl Clone for MoveList {
-    fn clone(&self) -> Self {
-        MoveList{ moves: self.moves.clone(), count: self.count.clone()}
-    }
-}
-
-impl <'a> IntoIterator for &'a MoveList {
-    type Item = &'a Move;
-    type IntoIter = MoveListIter<'a>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        MoveListIter{ move_list: self, i_count: 0}
-    }
-}
-
-pub struct MoveListIter <'a> {
-    move_list: &'a MoveList,
-    i_count: usize
-}
-
-impl <'a> Iterator for MoveListIter<'a> {
-    type Item = &'a Move;
-    fn next(&mut self) -> Option<&'a Move> {
-        if self.i_count < self.move_list.count {
-            let res = Some(&self.move_list.moves[self.i_count]);
-            self.i_count += 1;
-            return res;
-        }
-        None
-    }
-}
-
-impl From<Vec<Move>> for MoveList {
-    fn from(moves_vec: Vec<Move>) -> Self {
-        let mut list = MoveList::empty();
-        moves_vec.iter().for_each(|m| list.push(*m));
-        list
+    pub fn iter(&self) -> impl Iterator<Item = &Move> {
+        self.moves.iter()
     }
 }
 

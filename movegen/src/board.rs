@@ -5,28 +5,29 @@ use crate::pieces::std_pieces::*;
 use crate::moves::{MoveList, Move, MoveMeta, BitPositions};
 use crate::utils;
 
-#[repr(u64)]
-pub enum RankBB {
-    One     = 0xff,
-    Two     = 0xff_00,
-    Three   = 0xff_00_00,
-    Four    = 0xff_00_00_00,
-    Five    = 0xff_00_00_00_00,
-    Six     = 0xff_00_00_00_00_00,
-    Seven   = 0xff_00_00_00_00_00_00,
-    Eight   = 0xff_00_00_00_00_00_00_00,
+
+pub mod rank_bb {
+    use crate::board::BitBoard;
+    pub const ONE:   BitBoard   = 0xff;
+    pub const TWO:   BitBoard   = 0xff_00;
+    pub const THREE: BitBoard = 0xff_00_00;
+    pub const FOUR:  BitBoard  = 0xff_00_00_00;
+    pub const FIVE:  BitBoard  = 0xff_00_00_00_00;
+    pub const SIX:   BitBoard   = 0xff_00_00_00_00_00;
+    pub const SEVEN: BitBoard = 0xff_00_00_00_00_00_00;
+    pub const EIGHT: BitBoard = 0xff_00_00_00_00_00_00_00;
 }
 
-#[repr(u64)]
-pub enum FileBB {
-    A = 0x01_01_01_01_01_01_01_01,
-    B = 0x02_02_02_02_02_02_02_02,
-    C = 0x04_04_04_04_04_04_04_04,
-    D = 0x08_08_08_08_08_08_08_08,
-    E = 0x10_10_10_10_10_10_10_10,
-    F = 0x20_20_20_20_20_20_20_20,
-    G = 0x40_40_40_40_40_40_40_40,
-    H = 0x80_80_80_80_80_80_80_80,
+pub mod file_bb {
+    use crate::board::BitBoard;
+    pub const A: BitBoard = 0x01_01_01_01_01_01_01_01;
+    pub const B: BitBoard = 0x02_02_02_02_02_02_02_02;
+    pub const C: BitBoard = 0x04_04_04_04_04_04_04_04;
+    pub const D: BitBoard = 0x08_08_08_08_08_08_08_08;
+    pub const E: BitBoard = 0x10_10_10_10_10_10_10_10;
+    pub const F: BitBoard = 0x20_20_20_20_20_20_20_20;
+    pub const G: BitBoard = 0x40_40_40_40_40_40_40_40;
+    pub const H: BitBoard = 0x80_80_80_80_80_80_80_80;
 }
 
 pub enum Direction { NW, N, NE, E, SE, S, SW, W, }
@@ -49,63 +50,56 @@ impl Direction {
 pub type BitBoard = u64;
 pub type Square = u8;
 
-pub struct Board<'a> {
+pub struct Board {
     pub bitboards: [BitBoard; STD_PIECECOUNT],
-    pub previous: Option<&'a Board<'a>>,
     pub castle_w_s: bool,
     pub castle_w_l: bool,
     pub castle_b_s: bool,
     pub castle_b_l: bool,
     pub player: bool,
     pub fifty_move_count: u8,
-    pub ply: u8,
+    pub half_move_count: u16,
     pub enp_target: u8
 }
 
 pub struct BoardState<'a> {
-    pub board:           &'a Board<'a>,
-    pub prev_move:       &'a Move,
+    pub board:           &'a Board,
     pub pinned_mask:     &'a BitBoard,
     pub pinned_pieces:   &'a FnvHashMap<u8, BitBoard>,
     pub opp_check_mask:  &'a BitBoard,
     pub opp_attack_mask: &'a BitBoard,
 }
 
-impl<'a> Board<'a> {
-    pub fn is_root(&self) -> bool {
-        self.previous.is_none()
-    }
-    pub fn standard() -> Board<'a> {
+impl<'a> Board {
+    pub fn standard() -> Board {
         Board {
             bitboards: STD_BITBOARDS,
-            previous: None,
             castle_w_s: true,
             castle_w_l: true,
             castle_b_s: true,
             castle_b_l: true,
             player: WHITE,
             fifty_move_count: 0,
-            ply: 0,
+            half_move_count: 0,
             enp_target: 0,
         }
     }
-    pub fn empty() -> Board<'a> {
+    pub fn empty() -> Board {
         Board {
             bitboards: [0; STD_PIECECOUNT],
-            previous: None,
             castle_w_s: true,
             castle_w_l: true,
             castle_b_s: true,
             castle_b_l: true,
             player: WHITE,
             fifty_move_count: 0,
-            ply: 0,
+            half_move_count: 0,
             enp_target: 0,
         }
     }
     /// Parse an FEN string position into a board
     pub fn from_fenstr(fen_str: &str)-> Result<Board, String> {
-        // TODO: add 50move rule count and ply count to the Board struct
+        // TODO: add 50move rule count and half_move_count count to the Board struct
         let mut board = Board::empty();
 
         // board from 8th rank <space>
@@ -113,7 +107,7 @@ impl<'a> Board<'a> {
         // king/queen side castling rights <space>
         // enpassant target sq <space>
         // 50 move rule count <space>
-        // ply count
+        // half_move_count count
         // 
         // ex. rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1
         for (i, section_str) in fen_str.split_whitespace().enumerate() {
@@ -174,8 +168,8 @@ impl<'a> Board<'a> {
                     }
                 },
                 5 => {
-                    if let Ok(count) = section_str.parse::<u8>() {
-                        board.ply = count;
+                    if let Ok(count) = section_str.parse::<u16>() {
+                        board.half_move_count = count;
                     }
                 },
                 _ => {
@@ -184,7 +178,6 @@ impl<'a> Board<'a> {
             }
         }
         Ok( board )
-
     }
     pub fn attack_check_mask(&self, player: bool) -> (BitBoard, BitBoard) {
         let opp_king_mask = self.piece_bb(PieceType::King, !player);
@@ -203,13 +196,12 @@ impl<'a> Board<'a> {
 
         (attack_mask, check_mask)
     }
-    pub fn move_list(&self, player: bool, prev_move: &Move, move_list: &mut MoveList) {
+    pub fn move_list(&self, player: bool, move_list: &mut MoveList) {
         let (opp_attack_mask, opp_check_mask) = self.attack_check_mask(!player);
         let mut pinned_pieces: FnvHashMap<u8, BitBoard> = FnvHashMap::default();
         let pinned_mask = self.pinned(player, &mut pinned_pieces);
         let board_state = BoardState{
             board: self,
-            prev_move,
             pinned_mask: &pinned_mask,
             pinned_pieces: &pinned_pieces,
             opp_check_mask: &opp_check_mask,
@@ -285,19 +277,21 @@ impl<'a> Board<'a> {
     pub fn from_self(&self, bitboards: [BitBoard; STD_PIECECOUNT]) -> Board {
         Board {
             bitboards:  bitboards,
-            previous:   Some(self),
             castle_w_s: self.castle_w_s,
             castle_w_l: self.castle_w_l,
             castle_b_s: self.castle_b_s,
             castle_b_l: self.castle_b_l,
-            player:     self.player,
+            player:     !self.player,                   // switch player
             fifty_move_count: self.fifty_move_count,
-            ply: self.ply,
+            half_move_count: self.half_move_count + 1,  // increment half move count
             enp_target: 0,
         }
     }
-    pub fn make_move(&self, mov: Move) -> Option<Board> {
-        // clear src and dest in all bbs
+    pub fn make_move(&self, mov: &Move) -> Option<Board> {
+        if mov.is_invalid() {
+            return None
+        }
+
         let piece = mov.piece();
         let player = piece.player;
         let mut bitboards = self.bitboards.clone();
@@ -330,7 +324,7 @@ impl<'a> Board<'a> {
             _ => {
                 // first clear all dest
                 for bb in &mut bitboards {
-                    *bb ^= dest_mask
+                    *bb &= !dest_mask
                 }
                 bitboards[get_piece_i(&piece)] ^= src_mask | dest_mask;
             }
@@ -364,12 +358,7 @@ impl<'a> Board<'a> {
         } else {
             next_board.fifty_move_count += 1;
         }
-        
-        // increment ply on black's move
-        if player == BLACK {
-            next_board.ply += 1;
-        }
-
+        println!("{}", next_board);
         Some( next_board )
     }
 
@@ -398,5 +387,23 @@ impl<'a> Board<'a> {
             }
         }
         pinned_mask
+    }
+}
+
+impl std::fmt::Display for Board {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut board_chars = [['·'; 8]; 8];
+        for (i, bb) in self.bitboards.iter().enumerate() {
+            let piece_char = get_piece(i).piece_char();
+            for pos in BitPositions(*bb) {
+                let (file, rank) = utils::file_rank(pos);
+                board_chars[(7-rank) as usize][file as usize] = piece_char;
+            }
+        }
+        let board_str = board_chars.iter()
+                        .map(|a| a.iter().cloned().collect::<String>())
+                        .fold(String::new(), |a, b| a + &b + "\n");
+        let board_str = board_str.trim_end();
+        write!(f, "{}", board_str)
     }
 }

@@ -6,8 +6,9 @@
     1. Algebraic notation in/out. (Very verbose AN ✔)
     2. Switch to magic bitboards for sliding pieces attacks. ✔
     3. Purely legal movegen. (almost, except enpassant capture leading to check along rank4) ✔
-    4. FEN position input. **~**
-    4. Perft test. **~**
+    4. FEN position input. ✔
+    5. Perft test, Passed perft(4). ✔ *only total node count checked
+    6. Profile movegen. **~**
 3. UCI protocol support.
 4. Move Analysis:
     1. Eval function. **~**
