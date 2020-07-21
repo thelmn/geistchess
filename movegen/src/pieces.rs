@@ -1,6 +1,6 @@
 use std::iter;
 
-use crate::board::{BoardState, BitBoard, RankBB, Direction};
+use crate::board::{BoardState, BitBoard, rank_bb, Direction};
 use crate::moves::{Move, MoveMeta, BitPositions, MoveList};
 use crate::utils;
 
@@ -171,6 +171,25 @@ impl Piece {
         self.piece_type.an()
     } 
 
+    pub fn piece_char(&self) -> char {
+        match self {
+            Piece{ piece_type: PieceType::Pawn,   player: WHITE } => 'P',
+            Piece{ piece_type: PieceType::Knight, player: WHITE } => 'N',
+            Piece{ piece_type: PieceType::Bishop, player: WHITE } => 'B',
+            Piece{ piece_type: PieceType::Rook,   player: WHITE } => 'R',
+            Piece{ piece_type: PieceType::Queen,  player: WHITE } => 'Q',
+            Piece{ piece_type: PieceType::King,   player: WHITE } => 'K',
+            
+            Piece{ piece_type: PieceType::Pawn,   player: BLACK } => 'p',
+            Piece{ piece_type: PieceType::Knight, player: BLACK } => 'n',
+            Piece{ piece_type: PieceType::Bishop, player: BLACK } => 'b',
+            Piece{ piece_type: PieceType::Rook,   player: BLACK } => 'r',
+            Piece{ piece_type: PieceType::Queen,  player: BLACK } => 'q',
+            Piece{ piece_type: PieceType::King,   player: BLACK } => 'k',
+            _ => '·',
+        }
+    }
+
     pub fn invalid() -> Piece {
         Piece{ piece_type: PieceType::Invalid, player: WHITE }
     }
@@ -267,7 +286,6 @@ impl Piece {
     /// Only the corner case of enpassant capture leading to a check along the 4th rank is illegal
     pub fn move_list(&self, piece_mask: &BitBoard, board_state: &BoardState, move_list: &mut MoveList) {
         let board = board_state.board;
-        let prev_move = board_state.prev_move;
 
         let empty = board.empty_mask();
         let forward = self.player;
@@ -288,12 +306,12 @@ impl Piece {
                 for pawn_pos in BitPositions(pinned_pawns) {
                     if let Some(ray) = board_state.pinned_pieces.get(&pawn_pos) {
                         let valid_mask = if ray == &0 { &utils::ONES } else { ray };
-                        pawn_moves(forward, &piece_mask, valid_mask, &empty, &oppnt_mask, prev_move, self, move_list);
+                        pawn_moves(forward, &piece_mask, valid_mask, &empty, &oppnt_mask, &board.enp_target, self, move_list);
                     }
                 }
                 // use the check mask as the valid mask
                 let valid_mask = if board_state.opp_check_mask == &0 { &utils::ONES } else { board_state.opp_check_mask };
-                pawn_moves(forward, &piece_mask, valid_mask, &empty, &oppnt_mask, prev_move, self, move_list);
+                pawn_moves(forward, &piece_mask, valid_mask, &empty, &oppnt_mask, &board.enp_target, self, move_list);
             },
             PieceType::Knight => {
                 for knight_pos in BitPositions(*piece_mask) {
@@ -410,7 +428,12 @@ impl Piece {
             },
             PieceType::Invalid => {},
         }
+    }
+}
 
+impl std::fmt::Display for Piece {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.piece_char())
     }
 }
 
@@ -420,13 +443,13 @@ fn pawn_moves(
         valid_mask: &BitBoard, 
         empty: &BitBoard, 
         opp_mask: &BitBoard,
-        prev_move: &Move,
+        enp_target: &u8,
         self_: &Piece,
         move_list: &mut MoveList
     ) {
 
-    let rank7 = if forward { RankBB::Seven } else { RankBB::Two } as u64;
-    let rank8 = if forward { RankBB::Eight } else { RankBB::One } as u64;
+    let rank7 = if forward { rank_bb::SEVEN } else { rank_bb::TWO };
+    let rank8 = if forward { rank_bb::EIGHT } else { rank_bb::ONE };
     
     // direction is reversed since we shift the dest(empty/opponent) squares towards our pawns
     let mut dir = if forward { Direction::S } else { Direction::N };
@@ -437,7 +460,7 @@ fn pawn_moves(
     let pp_promo = pp1 & rank7;
     
     // double pawn push
-    let mut pp2 = if forward { RankBB::Four } else { RankBB::Five } as u64;
+    let mut pp2 = if forward { rank_bb::FOUR } else { rank_bb::FIVE };
     pp2 = utils::slide(pp2 & empty & valid_mask, 1, &dir) & empty;
     pp2 = utils::slide(pp2, 1, &dir) & piece_mask;
     
@@ -473,13 +496,11 @@ fn pawn_moves(
     // enpassant capture
     let mut cp_enp = 0;
     let mut cp_enp_dest = 0;
-    if prev_move.move_meta() == MoveMeta::Enpassant &&
-        prev_move.piece().player == !forward &&
+    if *enp_target != 0 &&
         *valid_mask == utils::ONES  // can't enpassant capture to block a check or when pinned
         {
-            let dest = prev_move.dest();
-            cp_enp_dest = if forward { dest+8 } else { dest-8 };
-            let dest_mask = utils::pos_mask(dest);
+            cp_enp_dest = if forward { enp_target+8 } else { enp_target-8 };
+            let dest_mask = utils::pos_mask(cp_enp_dest);
             cp_enp = if forward { 
                 utils::slide(dest_mask, 1, &Direction::SW) |
                 utils::slide(dest_mask, 1, &Direction::SE)

@@ -6,9 +6,11 @@ pub use magic::{bishop_attack, rook_attack};
 pub use patterns::{knight_attack, king_attack, pawn_attack};
 
 use bitintr::Popcnt;
+use std::convert::TryFrom;
 
 use crate::board::{BitBoard, Direction};
 use crate::pieces::{WHITE, BLACK};
+use crate::moves::Move;
 
 pub const ONES: BitBoard = 0xff_ff_ff_ff_ff_ff_ff_ff;
 
@@ -24,6 +26,18 @@ pub fn file_rank(pos: u8) -> (u8, u8) {
 
 pub fn file_rank_str(pos: u8) -> String {
     format!("{}{}", FILES[(pos%8) as usize], (pos/8)+1)
+}
+
+pub fn pos_from_str(pos_str: &str) -> Option<u8> {
+    let mut chars = pos_str.chars();
+    let file = chars.next()?;
+    let rank = chars.next()?;
+    let file = "abcdefgh".find(file)?;
+    let rank = "12345678".find(rank)?;
+    match u8::try_from(rank*8 + file) {
+        Ok(pos) => Some(pos),
+        Err(_) => None
+    }
 }
 
 const FILE_MASK_EAST: [BitBoard; 8] = [
@@ -101,6 +115,10 @@ pub fn castle_empty_squares(player: bool, is_short: bool) -> BitBoard {
 
 pub fn n_set_bits(bb: BitBoard) -> u64 {
     bb.popcnt()
+}
+
+pub fn is_double_pawnpush(mov: &Move) -> bool {
+    (mov.src() as i32 - mov.dest() as i32).abs() == 16
 }
 
 pub fn ray(src: u8, dest: u8) -> BitBoard {
