@@ -6,7 +6,7 @@ sys.path.append('../../')
 
 
 from .utils import uint64, shift, shift_or, file_rank_int, file_slide, senw_slide, swne_slide, get_bit_positions, clear_files, empty_bb, non_empty_bb, empty_gen, ray_moves, print_bb
-from move import PieceMoveList, Move
+from .move import PieceMoveList, Move
 
 #%%
 rank_4 = 0x00_00_00_00_ff_00_00_00

@@ -2,7 +2,7 @@ from typing import Iterable
 from collections.abc import Iterable
 from itertools import chain
 
-from utils import file_rank_str
+from .utils import file_rank_str
 
 class Move:
     def __init__(self, piece, src: int, dest: int, iscapture = False):

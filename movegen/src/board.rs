@@ -50,6 +50,7 @@ impl Direction {
 pub type BitBoard = u64;
 pub type Square = u8;
 
+#[derive(Clone, Copy)]
 pub struct Board {
     pub bitboards: [BitBoard; STD_PIECECOUNT],
     pub castle_w_s: bool,
@@ -62,6 +63,7 @@ pub struct Board {
     pub enp_target: u8
 }
 
+#[derive(Copy, Clone)]
 pub struct BoardState<'a> {
     pub board:           &'a Board,
     pub pinned_mask:     &'a BitBoard,
@@ -107,7 +109,7 @@ impl<'a> Board {
         // king/queen side castling rights <space>
         // enpassant target sq <space>
         // 50 move rule count <space>
-        // half_move_count count
+        // full_move_count count
         // 
         // ex. rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1
         for (i, section_str) in fen_str.split_whitespace().enumerate() {
@@ -169,7 +171,7 @@ impl<'a> Board {
                 },
                 5 => {
                     if let Ok(count) = section_str.parse::<u16>() {
-                        board.half_move_count = count;
+                        board.half_move_count = count*2;
                     }
                 },
                 _ => {
@@ -196,6 +198,27 @@ impl<'a> Board {
 
         (attack_mask, check_mask)
     }
+
+    /// Generate all pseado-legal moves for {player} into {move_list}
+    /// and also returns the pinned pieces mask
+    pub fn pseudo_move_list(&self, player: bool, move_list: &mut MoveList) -> BitBoard {
+        let (opp_attack_mask, opp_check_mask) = self.attack_check_mask(!player);
+        let mut pinned_pieces: FnvHashMap<u8, BitBoard> = FnvHashMap::default();
+        let pinned_mask = self.pinned(player, &mut pinned_pieces);
+        let board_state = BoardState{
+            board: self,
+            pinned_mask: &pinned_mask,
+            pinned_pieces: &pinned_pieces,
+            opp_check_mask: &opp_check_mask,
+            opp_attack_mask: &opp_attack_mask,
+        };
+        self.bitboards.iter()
+                .enumerate()
+                .filter(|(i, _)| get_piece(*i).player == player)
+                .for_each(|(i, bb)| ( get_piece(i).pseudo_move_list(bb, &board_state, move_list) ) );
+        pinned_mask
+    }
+    /// Generates all legal moves for {player} into {move_list}
     pub fn move_list(&self, player: bool, move_list: &mut MoveList) {
         let (opp_attack_mask, opp_check_mask) = self.attack_check_mask(!player);
         let mut pinned_pieces: FnvHashMap<u8, BitBoard> = FnvHashMap::default();
@@ -321,6 +344,7 @@ impl<'a> Board {
                 bitboards[match_piece_i(piece_type, player)] ^= dest_mask;
                 bitboards[get_piece_i(&piece)] ^= src_mask;
             },
+            MoveMeta::Illegal => return None,
             _ => {
                 // first clear all dest
                 for bb in &mut bitboards {

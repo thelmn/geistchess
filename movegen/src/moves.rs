@@ -6,16 +6,20 @@ use crate::pieces::{Piece, PieceType};
 use crate::board::{Square, BitBoard};
 use crate::utils;
 
-pub const MOVE_QUIET:       u8 = 0b0000;
-pub const MOVE_CASTLE_S:    u8 = 0b0001;
-pub const MOVE_CASTLE_L:    u8 = 0b0010;
-pub const MOVE_ENPASSANT:   u8 = 0b0011;
-pub const MOVE_PROMOTE_K:   u8 = 0b0100;
-pub const MOVE_PROMOTE_B:   u8 = 0b0101;
-pub const MOVE_PROMOTE_R:   u8 = 0b0110;
-pub const MOVE_PROMOTE_Q:   u8 = 0b0111;
-
-pub const IS_CAPTURE_MASK:  u8 = 0b1000;
+pub const MOVE_ILLEGAL:     u8 = 0;
+pub const MOVE_QUIET:       u8 = 1;
+pub const MOVE_CAPTURE:     u8 = 2;
+pub const MOVE_CASTLE_S:    u8 = 3;
+pub const MOVE_CASTLE_L:    u8 = 4;
+pub const MOVE_ENPASSANT:   u8 = 5;
+pub const MOVE_PROMOTE_N:   u8 = 6;
+pub const MOVE_PROMOTE_B:   u8 = 7;
+pub const MOVE_PROMOTE_R:   u8 = 8;
+pub const MOVE_PROMOTE_Q:   u8 = 9;
+pub const MOVE_PROMOTE_N_X: u8 = 10;
+pub const MOVE_PROMOTE_B_X: u8 = 11;
+pub const MOVE_PROMOTE_R_X: u8 = 12;
+pub const MOVE_PROMOTE_Q_X: u8 = 13;
 
 #[derive(PartialEq, Debug)]
 pub enum MoveMeta {
@@ -24,39 +28,45 @@ pub enum MoveMeta {
     Castle { is_short: bool },
     Enpassant,
     Promotion {is_capture: bool, piece_type: PieceType},
+    Illegal,
 }
 
 impl MoveMeta {
     fn to_bits(&self) -> u8 {
         match self {
             &MoveMeta::Quiet => MOVE_QUIET,
-            &MoveMeta::Capture => IS_CAPTURE_MASK,
+            &MoveMeta::Capture => MOVE_CAPTURE,
             &MoveMeta::Castle{ is_short } => if is_short {MOVE_CASTLE_S} else {MOVE_CASTLE_L},
-            &MoveMeta::Enpassant => MOVE_ENPASSANT | IS_CAPTURE_MASK,
-            &MoveMeta::Promotion{ is_capture, piece_type } => {
-                (if is_capture {IS_CAPTURE_MASK} else {MOVE_QUIET}) | 
-                match piece_type {
-                    PieceType::Knight => MOVE_PROMOTE_K,
-                    PieceType::Bishop => MOVE_PROMOTE_B,
-                    PieceType::Rook => MOVE_PROMOTE_R,
-                    PieceType::Queen => MOVE_PROMOTE_Q,
-                    _ => MOVE_PROMOTE_Q,
-                }
-            },
+            &MoveMeta::Enpassant => MOVE_ENPASSANT,
+            &MoveMeta::Promotion{ is_capture: false, piece_type: PieceType::Knight } => MOVE_PROMOTE_N,
+            &MoveMeta::Promotion{ is_capture: false, piece_type: PieceType::Bishop } => MOVE_PROMOTE_B,
+            &MoveMeta::Promotion{ is_capture: false, piece_type: PieceType::Rook } => MOVE_PROMOTE_R,
+            &MoveMeta::Promotion{ is_capture: false, piece_type: PieceType::Queen } => MOVE_PROMOTE_Q,
+            &MoveMeta::Promotion{ is_capture: false, piece_type: _ } => MOVE_PROMOTE_Q,
+            &MoveMeta::Promotion{ is_capture: true, piece_type: PieceType::Knight } => MOVE_PROMOTE_N_X,
+            &MoveMeta::Promotion{ is_capture: true, piece_type: PieceType::Bishop } => MOVE_PROMOTE_B_X,
+            &MoveMeta::Promotion{ is_capture: true, piece_type: PieceType::Rook } => MOVE_PROMOTE_R_X,
+            &MoveMeta::Promotion{ is_capture: true, piece_type: PieceType::Queen } => MOVE_PROMOTE_Q_X,
+            &MoveMeta::Promotion{ is_capture: true, piece_type: _ } => MOVE_PROMOTE_Q_X,
+            &MoveMeta::Illegal => MOVE_ILLEGAL,
         }
     }
     fn from_bits(meta_bits: u8) -> Self {
-        let is_capture = meta_bits >= IS_CAPTURE_MASK;
-        let nc_meta_bits = meta_bits & !IS_CAPTURE_MASK; // unset is capture bit
-        match nc_meta_bits {
+        match meta_bits {
+            MOVE_QUIET => MoveMeta::Quiet,
+            MOVE_CAPTURE => MoveMeta::Capture,
             MOVE_CASTLE_S  => MoveMeta::Castle{ is_short: true },
             MOVE_CASTLE_L  => MoveMeta::Castle{ is_short: false },
             MOVE_ENPASSANT => MoveMeta::Enpassant,
-            MOVE_PROMOTE_K => MoveMeta::Promotion{ is_capture, piece_type: PieceType::Knight },
-            MOVE_PROMOTE_B => MoveMeta::Promotion{ is_capture, piece_type: PieceType::Bishop },
-            MOVE_PROMOTE_R => MoveMeta::Promotion{ is_capture, piece_type: PieceType::Rook },
-            MOVE_PROMOTE_Q => MoveMeta::Promotion{ is_capture, piece_type: PieceType::Queen },
-            _              => if is_capture { MoveMeta::Capture } else { MoveMeta::Quiet }, // capture or quiet
+            MOVE_PROMOTE_N => MoveMeta::Promotion{ is_capture: false, piece_type: PieceType::Knight },
+            MOVE_PROMOTE_B => MoveMeta::Promotion{ is_capture: false, piece_type: PieceType::Bishop },
+            MOVE_PROMOTE_R => MoveMeta::Promotion{ is_capture: false, piece_type: PieceType::Rook },
+            MOVE_PROMOTE_Q => MoveMeta::Promotion{ is_capture: false, piece_type: PieceType::Queen },
+            MOVE_PROMOTE_N_X => MoveMeta::Promotion{ is_capture: true, piece_type: PieceType::Knight },
+            MOVE_PROMOTE_B_X => MoveMeta::Promotion{ is_capture: true, piece_type: PieceType::Bishop },
+            MOVE_PROMOTE_R_X => MoveMeta::Promotion{ is_capture: true, piece_type: PieceType::Rook },
+            MOVE_PROMOTE_Q_X => MoveMeta::Promotion{ is_capture: true, piece_type: PieceType::Queen },
+            _ => MoveMeta::Illegal,
         }
     }
     pub fn is_capture(&self) -> bool {
@@ -83,7 +93,7 @@ pub struct Move{ meta: u8, srcdest: u16 }
 
 impl Move {
     pub fn invalid() -> Self {
-        Move{meta: 0, srcdest: 0}
+        Move{meta: MoveMeta::Illegal.to_bits(), srcdest: 0}
     }
     pub fn new(piece: &Piece, meta: &MoveMeta, src: Square, dest: Square) -> Self {
         let meta: u8 =  ((piece.to_bits() << PIECE_MASK_SHIFT) & PIECE_MASK) | 

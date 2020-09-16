@@ -1,4 +1,5 @@
 use std::iter;
+use hdf5;
 
 use crate::board::{BoardState, BitBoard, rank_bb, Direction};
 use crate::moves::{Move, MoveMeta, BitPositions, MoveList};
@@ -6,6 +7,29 @@ use crate::utils;
 
 pub const WHITE: bool = true;
 pub const BLACK: bool = false;
+
+#[derive(hdf5::H5Type, Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[repr(u8)]
+pub enum SqOccupation {
+    Empty = 1,
+    White = 2,
+    Black = 3,
+}
+
+impl Default for SqOccupation {
+    fn default() -> Self {
+        SqOccupation::Empty
+    }
+}
+
+impl From<bool> for SqOccupation {
+    fn from(player: bool) -> Self {
+        match player {
+            false => SqOccupation::Black,
+            true => SqOccupation::White,
+        }
+    }
+}
 
 pub mod std_pieces {
     use crate::board::BitBoard;
@@ -102,16 +126,16 @@ pub mod std_pieces {
     const STD_KINGS_BLACK: BitBoard = 0x10_00_00_00_00_00_00_00;
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(hdf5::H5Type, Copy, Clone, PartialEq, Eq, Hash, Debug)]
 #[repr(u8)]
 pub enum PieceType {
     Invalid = 0,
-    Pawn,
-    Knight,
-    Bishop,
-    Rook,
-    Queen,
-    King,
+    Pawn    = 1,
+    Knight  = 2,
+    Bishop  = 3,
+    Rook    = 4,
+    Queen   = 5,
+    King    = 6,
 }
 
 impl PieceType {
@@ -139,6 +163,12 @@ impl PieceType {
             PieceType::King => "K",
             PieceType::Invalid => "_",
         }
+    }
+}
+
+impl Default for PieceType {
+    fn default() -> Self {
+        PieceType::Invalid
     }
 }
 
@@ -281,7 +311,114 @@ impl Piece {
             PieceType::Invalid => {(0, 0)},
         }
     }
+
+    /// Finds pseudolegal moves for this piece. Except castling with no rights
+    pub fn pseudo_move_list(&self, piece_mask: &BitBoard, board_state: &BoardState, move_list: &mut MoveList) {
+        let board = board_state.board;
+
+        let empty = board.empty_mask();
+        let forward = self.player;
+
+        let _player_mask = board.player_mask(forward);
+        let oppnt_mask = board.player_mask(!forward);
+        
+        
+        match self.piece_type {
+            PieceType::Pawn => {
+                pawn_moves(forward, &piece_mask, &utils::ONES, &empty, &oppnt_mask, &board.enp_target, self, move_list);
+            },
+            PieceType::Knight => {
+                for knight_pos in BitPositions(*piece_mask) {
+                    let attack_mask = utils::knight_attack(knight_pos);
+                    
+                    let ncp_dest = attack_mask & empty;
+                    let cp_dest = attack_mask & oppnt_mask;
+
+                    let meta = MoveMeta::Quiet;
+                    move_list.push_from_forpiece( self, &meta, iter::repeat(knight_pos), BitPositions(ncp_dest) );
+                    let meta = MoveMeta::Capture;
+                    move_list.push_from_forpiece( self, &meta, iter::repeat(knight_pos), BitPositions(cp_dest) );
+                }
+            },
+            PieceType::Bishop => {
+                for bishop_pos in BitPositions(*piece_mask) {
+                    let attack_mask = utils::bishop_attack(bishop_pos, !empty);
+                    
+                    let ncp_dest = attack_mask & empty;
+                    let cp_dest = attack_mask & oppnt_mask;
+
+                    let meta = MoveMeta::Quiet;
+                    move_list.push_from_forpiece( self, &meta, iter::repeat(bishop_pos), BitPositions(ncp_dest) );
+                    let meta = MoveMeta::Capture;
+                    move_list.push_from_forpiece( self, &meta, iter::repeat(bishop_pos), BitPositions(cp_dest) );
+                }
+            },
+            PieceType::Rook => {
+                for rook_pos in BitPositions(*piece_mask) {
+                    let attack_mask = utils::rook_attack(rook_pos, !empty);
+                    
+                    let ncp_dest = attack_mask & empty;
+                    let cp_dest = attack_mask & oppnt_mask;
+
+                    let meta = MoveMeta::Quiet;
+                    move_list.push_from_forpiece( self, &meta, iter::repeat(rook_pos), BitPositions(ncp_dest) );
+                    let meta = MoveMeta::Capture;
+                    move_list.push_from_forpiece( self, &meta, iter::repeat(rook_pos), BitPositions(cp_dest) );
+                }
+            },
+            PieceType::Queen => {
+                for queen_pos in BitPositions(*piece_mask) {
+                    let attack_mask = utils::bishop_attack(queen_pos, !empty);
+                    let attack_mask = attack_mask ^ utils::rook_attack(queen_pos, !empty);
+                    
+                    let ncp_dest = attack_mask & empty;
+                    let cp_dest = attack_mask & oppnt_mask;
     
+                    let meta = MoveMeta::Quiet;
+                    move_list.push_from_forpiece( self, &meta, iter::repeat(queen_pos), BitPositions(ncp_dest) );
+                    let meta = MoveMeta::Capture;
+                    move_list.push_from_forpiece( self, &meta, iter::repeat(queen_pos), BitPositions(cp_dest) );
+                }
+            },
+            PieceType::King => {
+                for king_pos in BitPositions(*piece_mask) {
+                    let attack_mask = utils::king_attack(king_pos);
+
+                    let ncp_dest = attack_mask & empty;
+                    let cp_dest = attack_mask & oppnt_mask;
+
+                    // can only castle while not in check
+                    if *(board_state.opp_check_mask) == 0 {
+                        // check short castle rights
+                        if board.castle_rights(forward, true) {
+                            // check that opp does not attack the squares the king will travel over
+                            if (board_state.opp_attack_mask & utils::castle_travel_squares(forward, true) == 0) &&
+                                // and the squares between are not occupied
+                                (!empty & utils::castle_empty_squares(forward, true) == 0) {
+                                let meta = MoveMeta::Castle{ is_short: true };
+                                move_list.push(Move::new(self, &meta, king_pos, 0));
+                            }
+                        }
+                        // check long castle rights
+                        if board.castle_rights(forward, false) {
+                            if (board_state.opp_attack_mask & utils::castle_travel_squares(forward, false) == 0) &&
+                                (!empty & utils::castle_empty_squares(forward, false) == 0) {
+                                let meta = MoveMeta::Castle{ is_short: false };
+                                move_list.push(Move::new(self, &meta, king_pos, 0));
+                            }
+                        }
+                    }                    
+    
+                    let meta = MoveMeta::Quiet;
+                    move_list.push_from_forpiece( self, &meta, iter::repeat(king_pos), BitPositions(ncp_dest) );
+                    let meta = MoveMeta::Capture;
+                    move_list.push_from_forpiece( self, &meta, iter::repeat(king_pos), BitPositions(cp_dest) );
+                }
+            },
+            PieceType::Invalid => {},
+        }
+    }                   
+
     /// Finds legal (almost) moves for this piece. Returns the piece(s) attack mask
     /// Only the corner case of enpassant capture leading to a check along the 4th rank is illegal
     pub fn move_list(&self, piece_mask: &BitBoard, board_state: &BoardState, move_list: &mut MoveList) {
@@ -428,6 +565,12 @@ impl Piece {
             },
             PieceType::Invalid => {},
         }
+    }
+}
+
+impl Default for Piece {
+    fn default() -> Self {
+        Piece::invalid()
     }
 }
 

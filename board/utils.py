@@ -466,3 +466,7 @@ def write_rays():
 )
 
 # %%
+def write_file_rank(): 
+    print([(i%8, i//8) for i in range(64)])
+
+# %%
